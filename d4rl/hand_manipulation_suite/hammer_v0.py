@@ -10,8 +10,9 @@ import os
 ADD_BONUS_REWARDS = True
 
 class HammerEnvV0(mujoco_env.MujocoEnv, utils.EzPickle, offline_env.OfflineEnv):
-    def __init__(self, **kwargs):
+    def __init__(self, reward_type='dense_l2', **kwargs):
         offline_env.OfflineEnv.__init__(self, **kwargs)
+        self.reward_type = reward_type
         self.target_obj_sid = -1
         self.S_grasp_sid = -1
         self.obj_bid = -1
@@ -53,10 +54,36 @@ class HammerEnvV0(mujoco_env.MujocoEnv, utils.EzPickle, offline_env.OfflineEnv):
         target_pos = self.data.site_xpos[self.target_obj_sid].ravel()
         goal_pos = self.data.site_xpos[self.goal_sid].ravel()
         
+        # compute distance between tool and target
+        d = np.linalg.norm(tool_pos - target_pos)
+        d_og_l1 = np.sum(np.abs(tool_pos - target_pos))
+        
+        # compute reward based on reward_type
+        if self.reward_type == "sparse":
+            # parse reward: returns -1 if distance is above threshold, 0 otherwise
+            reward = -np.array(d > 0.1, dtype=np.float32)
+        elif self.reward_type == "dense_l2":
+            # dense L2 reward: negative Euclidean distance
+            reward = -d.astype(np.float32)
+        elif self.reward_type == 'dense_l1':
+            # dense L1 reward: negative Manhattan distance
+            reward = -d_og_l1.astype(np.float32)
+        elif self.reward_type == 'dense_l2_exp':
+            # dense L2 exponential reward: exp((1-d)*10)
+            reward = np.exp((1-d)*10).astype(np.float32)
+        elif self.reward_type == 'dense_l2_log':
+            # dense L2 logarithmic reward: log((10-d)*10)
+            reward = np.log((10-d)*10).astype(np.float32)
+        elif self.reward_type == 'dense_l2_plateau':
+            # dense L2 plateau reward: -exp(-(d-10))
+            reward = -np.exp(-(d-10)).astype(np.float32)
+        else:
+            # default dense L2 reward
+            reward = -d.astype(np.float32)
+        
+        # Additional reward terms
         # get to hammer
-        reward = - 0.1 * np.linalg.norm(palm_pos - obj_pos)
-        # take hammer head to nail
-        reward -= np.linalg.norm((tool_pos - target_pos))
+        reward -= 0.1 * np.linalg.norm(palm_pos - obj_pos)
         # make nail go inside
         reward -= 10 * np.linalg.norm(target_pos - goal_pos)
         # velocity penalty
