@@ -10,9 +10,12 @@ import os
 ADD_BONUS_REWARDS = True
 
 class HammerEnvV0(mujoco_env.MujocoEnv, utils.EzPickle, offline_env.OfflineEnv):
-    def __init__(self, reward_type='dense_l2', **kwargs):
+    def __init__(self, reward_type='dense_l2', hammer_reward_type='dense_l2', nail_reward_type='dense_l2', velocity_reward_type='dense_l2', **kwargs):
         offline_env.OfflineEnv.__init__(self, **kwargs)
         self.reward_type = reward_type
+        self.hammer_reward_type = hammer_reward_type
+        self.nail_reward_type = nail_reward_type
+        self.velocity_reward_type = velocity_reward_type
         self.target_obj_sid = -1
         self.S_grasp_sid = -1
         self.obj_bid = -1
@@ -60,7 +63,7 @@ class HammerEnvV0(mujoco_env.MujocoEnv, utils.EzPickle, offline_env.OfflineEnv):
         
         # compute reward based on reward_type
         if self.reward_type == "sparse":
-            # parse reward: returns -1 if distance is above threshold, 0 otherwise
+            # sparse reward: returns -1 if distance is above threshold, 0 otherwise
             reward = -np.array(d > 0.1, dtype=np.float32)
         elif self.reward_type == "dense_l2":
             # dense L2 reward: negative Euclidean distance
@@ -81,13 +84,59 @@ class HammerEnvV0(mujoco_env.MujocoEnv, utils.EzPickle, offline_env.OfflineEnv):
             # default dense L2 reward
             reward = -d.astype(np.float32)
         
-        # Additional reward terms
-        # get to hammer
-        reward -= 0.1 * np.linalg.norm(palm_pos - obj_pos)
-        # make nail go inside
-        reward -= 10 * np.linalg.norm(target_pos - goal_pos)
-        # velocity penalty
-        reward -= 1e-2 * np.linalg.norm(self.data.qvel.ravel())
+        # compute hammer reward
+        hammer_dist = np.linalg.norm(palm_pos - obj_pos)
+        if self.hammer_reward_type == "sparse":
+            hammer_reward = -np.array(hammer_dist > 0.1, dtype=np.float32)
+        elif self.hammer_reward_type == "dense_l2":
+            hammer_reward = -hammer_dist.astype(np.float32)
+        elif self.hammer_reward_type == 'dense_l1':
+            hammer_reward = -np.sum(np.abs(palm_pos - obj_pos)).astype(np.float32)
+        elif self.hammer_reward_type == 'dense_l2_exp':
+            hammer_reward = np.exp((1-hammer_dist)*10).astype(np.float32)
+        elif self.hammer_reward_type == 'dense_l2_log':
+            hammer_reward = np.log((10-hammer_dist)*10).astype(np.float32)
+        elif self.hammer_reward_type == 'dense_l2_plateau':
+            hammer_reward = -np.exp(-(hammer_dist-10)).astype(np.float32)
+        else:
+            hammer_reward = -hammer_dist.astype(np.float32)
+        
+        # compute nail reward
+        nail_dist = np.linalg.norm(target_pos - goal_pos)
+        if self.nail_reward_type == "sparse":
+            nail_reward = -np.array(nail_dist > 0.1, dtype=np.float32)
+        elif self.nail_reward_type == "dense_l2":
+            nail_reward = -nail_dist.astype(np.float32)
+        elif self.nail_reward_type == 'dense_l1':
+            nail_reward = -np.sum(np.abs(target_pos - goal_pos)).astype(np.float32)
+        elif self.nail_reward_type == 'dense_l2_exp':
+            nail_reward = np.exp((1-nail_dist)*10).astype(np.float32)
+        elif self.nail_reward_type == 'dense_l2_log':
+            nail_reward = np.log((10-nail_dist)*10).astype(np.float32)
+        elif self.nail_reward_type == 'dense_l2_plateau':
+            nail_reward = -np.exp(-(nail_dist-10)).astype(np.float32)
+        else:
+            nail_reward = -nail_dist.astype(np.float32)
+        
+        # compute velocity penalty
+        velocity = np.linalg.norm(self.data.qvel.ravel())
+        if self.velocity_reward_type == "sparse":
+            velocity_reward = -np.array(velocity > 0.1, dtype=np.float32)
+        elif self.velocity_reward_type == "dense_l2":
+            velocity_reward = -velocity.astype(np.float32)
+        elif self.velocity_reward_type == 'dense_l1':
+            velocity_reward = -np.sum(np.abs(self.data.qvel.ravel())).astype(np.float32)
+        elif self.velocity_reward_type == 'dense_l2_exp':
+            velocity_reward = np.exp((1-velocity)*10).astype(np.float32)
+        elif self.velocity_reward_type == 'dense_l2_log':
+            velocity_reward = np.log((10-velocity)*10).astype(np.float32)
+        elif self.velocity_reward_type == 'dense_l2_plateau':
+            velocity_reward = -np.exp(-(velocity-10)).astype(np.float32)
+        else:
+            velocity_reward = -velocity.astype(np.float32)
+        
+        # combine rewards
+        reward += hammer_reward + nail_reward + velocity_reward
 
         if ADD_BONUS_REWARDS:
             # bonus for lifting up the hammer
